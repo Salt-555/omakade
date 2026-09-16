@@ -202,6 +202,11 @@ void collectGames(const QString& directory, int depth, bool flatpak, const QStri
     if (seenPaths->contains(xex)) {
       return;
     }
+    if (!QFileInfo(xex).isReadable()) {
+      result->incomplete = true;
+      result->warnings.append(QStringLiteral("Could not read %1").arg(xex));
+      return;
+    }
     QString title = cleanTitle(dir.dirName());
     if (title.isEmpty()) {
       return;
@@ -233,6 +238,11 @@ void collectGames(const QString& directory, int depth, bool flatpak, const QStri
     }
     const QString path = QDir::cleanPath(child.absoluteFilePath());
     if (seenPaths->contains(path)) {
+      continue;
+    }
+    if (!QFileInfo(path).isReadable()) {
+      result->incomplete = true;
+      result->warnings.append(QStringLiteral("Could not read %1").arg(path));
       continue;
     }
     // ".xex" files that are not named default.xex are standalone titles too.

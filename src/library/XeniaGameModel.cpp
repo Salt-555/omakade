@@ -34,7 +34,7 @@ XeniaGameModel::XeniaGameModel(const QString& omakadeDatabasePath, PlaySessionSt
       if (!m_games.isEmpty()) {
         emit dataChanged(index(0), index(static_cast<int>(m_games.size()) - 1),
                          {GameRoles::Hours, GameRoles::PlaytimeSeconds, GameRoles::PlaytimeText,
-                          GameRoles::PlaytimeProvenance, GameRoles::LastPlayed});
+                          GameRoles::PlaytimeProvenance, GameRoles::LastPlayed, GameRoles::Recent});
       }
     });
   }
