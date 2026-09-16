@@ -12,6 +12,8 @@ class AppSettings final : public QObject {
       bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY reducedMotionChanged)
   Q_PROPERTY(int artworkCacheLimitMb READ artworkCacheLimitMb WRITE setArtworkCacheLimitMb NOTIFY
                  artworkCacheLimitMbChanged)
+  Q_PROPERTY(bool protonDbEnabled READ protonDbEnabled WRITE setProtonDbEnabled NOTIFY protonDbEnabledChanged)
+  Q_PROPERTY(bool protonDbBadges READ protonDbBadges WRITE setProtonDbBadges NOTIFY protonDbBadgesChanged)
   Q_PROPERTY(QString steamId READ steamId WRITE setSteamId NOTIFY steamIdChanged)
   Q_PROPERTY(
       QString igdbClientId READ igdbClientId WRITE setIgdbClientId NOTIFY igdbClientIdChanged)
@@ -32,6 +34,10 @@ class AppSettings final : public QObject {
   Q_PROPERTY(bool dolphinEnabled READ dolphinEnabled WRITE setDolphinEnabled NOTIFY sourcesChanged)
   Q_PROPERTY(
       bool battleNetEnabled READ battleNetEnabled WRITE setBattleNetEnabled NOTIFY sourcesChanged)
+  Q_PROPERTY(bool rommEnabled READ rommEnabled WRITE setRommEnabled NOTIFY sourcesChanged)
+  Q_PROPERTY(QString rommUrl READ rommUrl WRITE setRommUrl NOTIFY rommConfigurationChanged)
+  Q_PROPERTY(QString rommLibraryRoot READ rommLibraryRoot WRITE setRommLibraryRoot NOTIFY
+                 rommConfigurationChanged)
   Q_PROPERTY(bool consolePortalsEnabled READ consolePortalsEnabled WRITE setConsolePortalsEnabled
                  NOTIFY consolePortalsEnabledChanged)
   Q_PROPERTY(QStringList romFolders READ romFolders WRITE setRomFolders NOTIFY romFoldersChanged)
@@ -46,6 +52,9 @@ class AppSettings final : public QObject {
                  setPreferStandaloneEmulators NOTIFY preferStandaloneEmulatorsChanged)
   Q_PROPERTY(bool closeAfterLaunch READ closeAfterLaunch WRITE setCloseAfterLaunch NOTIFY
                  closeAfterLaunchChanged)
+  Q_PROPERTY(bool protectRetroArchSaves READ protectRetroArchSaves WRITE setProtectRetroArchSaves NOTIFY protectRetroArchSavesChanged)
+  Q_PROPERTY(bool trackPlaySessions READ trackPlaySessions WRITE setTrackPlaySessions NOTIFY
+                 trackPlaySessionsChanged)
   Q_PROPERTY(bool couchModeEnabled READ couchModeEnabled WRITE setCouchModeEnabled NOTIFY
                  couchModeEnabledChanged)
   Q_PROPERTY(QString couchLibraryView READ couchLibraryView WRITE setCouchLibraryView NOTIFY
@@ -70,6 +79,10 @@ public:
   void setReducedMotion(bool value);
   [[nodiscard]] int artworkCacheLimitMb() const;
   void setArtworkCacheLimitMb(int value);
+  bool protonDbEnabled() const { return m_protonDbEnabled; }
+  void setProtonDbEnabled(bool value);
+  bool protonDbBadges() const { return m_protonDbBadges; }
+  void setProtonDbBadges(bool value);
   [[nodiscard]] QString steamId() const;
   void setSteamId(const QString& value);
   [[nodiscard]] QString igdbClientId() const;
@@ -135,8 +148,19 @@ public:
   void setPreferStandaloneEmulators(bool value);
   [[nodiscard]] bool battleNetEnabled() const;
   void setBattleNetEnabled(bool value);
+  [[nodiscard]] bool rommEnabled() const { return m_rommEnabled; }
+  void setRommEnabled(bool value);
+  [[nodiscard]] QString rommUrl() const { return m_rommUrl; }
+  void setRommUrl(const QString& value);
+  [[nodiscard]] QString rommLibraryRoot() const { return m_rommLibraryRoot; }
+  void setRommLibraryRoot(const QString& value);
   [[nodiscard]] bool closeAfterLaunch() const;
   void setCloseAfterLaunch(bool value);
+  // Session recording by omakade-sessiond; the daemon reads the same config key.
+  [[nodiscard]] bool trackPlaySessions() const;
+  void setTrackPlaySessions(bool value);
+  bool protectRetroArchSaves() const { return m_protectRetroArchSaves; }
+  void setProtectRetroArchSaves(bool value);
   [[nodiscard]] bool couchModeEnabled() const;
   void setCouchModeEnabled(bool value);
   [[nodiscard]] QString couchLibraryView() const;
@@ -159,14 +183,20 @@ public:
   Q_INVOKABLE QString gogLibraryPathStatus(const QString& path) const;
 
 signals:
+  void saveFailed(const QString& message);
   void gogLibraryPathsChanged();
+  void rommConfigurationChanged();
   void reducedMotionChanged();
   void artworkCacheLimitMbChanged();
+  void protonDbEnabledChanged();
+  void protonDbBadgesChanged();
   void steamIdChanged();
   void igdbClientIdChanged();
   void retroAchievementsUsernameChanged();
   void sourcesChanged();
   void closeAfterLaunchChanged();
+  void trackPlaySessionsChanged();
+  void protectRetroArchSavesChanged();
   void couchModeEnabledChanged();
   void couchLibraryViewChanged();
   void librarySortModeChanged();
@@ -186,10 +216,12 @@ private:
   void assignBackupSettings(const QJsonObject& settings);
   [[nodiscard]] static QString defaultPath();
   void load();
-  bool save() const;
+  bool save();
 
   QString m_path;
   QStringList m_gogLibraryPaths;
+  bool m_protonDbEnabled = false;
+  bool m_protonDbBadges = false;
   bool m_reducedMotion = false;
   int m_artworkCacheLimitMb = 1024;
   QString m_steamId;
@@ -220,7 +252,12 @@ private:
   int m_consoleExpandLimit = 200;
   bool m_preferStandaloneEmulators = false;
   bool m_battleNetEnabled = true;
+  bool m_rommEnabled = false;
+  QString m_rommUrl;
+  QString m_rommLibraryRoot;
   bool m_closeAfterLaunch = false;
+  bool m_trackPlaySessions = false;
+  bool m_protectRetroArchSaves = true;
   bool m_couchModeEnabled = false;
   QString m_couchLibraryView = QStringLiteral("detail");
   int m_librarySortMode = 0;

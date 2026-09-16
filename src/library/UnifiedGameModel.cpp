@@ -1,4 +1,5 @@
 #include "metadata/GameMetadata.h"
+#include "launch/GameLauncher.h"
 #include "library/UnifiedGameModel.h"
 
 #include "library/DatabaseTuning.h"
@@ -80,6 +81,10 @@ QString normalizedCollectionName(const QString& input) {
 UnifiedGameModel::UnifiedGameModel(const QString& databasePath, QObject* parent)
     : QAbstractListModel(parent),
       m_connectionName(QStringLiteral("omakade-artwork-%1").arg(QUuid::createUuid().toString())) {
+  connect(this, &QAbstractItemModel::dataChanged, this, [this] { m_reviewIndexDirty = true; });
+  connect(this, &QAbstractItemModel::modelReset, this, [this] { m_reviewIndexDirty = true; });
+  connect(this, &QAbstractItemModel::rowsInserted, this, [this] { m_reviewIndexDirty = true; });
+  connect(this, &QAbstractItemModel::rowsRemoved, this, [this] { m_reviewIndexDirty = true; });
   if (!databasePath.isEmpty()) {
     openArtworkDatabase(databasePath);
   }
@@ -114,6 +119,14 @@ void UnifiedGameModel::addSourceModel(QAbstractItemModel* model) {
               }
               return;
             }
+            auto forwardedRoles = roles;
+            if (!roles.isEmpty() &&
+                (roles.contains(GameRoles::Hours) || roles.contains(GameRoles::PlaytimeSeconds))) {
+              for (int role :
+                   {GameRoles::Hours, GameRoles::PlaytimeSeconds, GameRoles::PlaytimeText})
+                if (!forwardedRoles.contains(role))
+                  forwardedRoles.append(role);
+            }
             QSet<QString> changedGroups;
             for (int row = topLeft.row(); row <= bottomRight.row(); ++row) {
               const QString groupId = m_groupForGame.value(gameKey({.model = model, .row = row}));
@@ -127,12 +140,16 @@ void UnifiedGameModel::addSourceModel(QAbstractItemModel* model) {
                                   source.row <= bottomRight.row();
               if (direct || (!changedGroups.isEmpty() &&
                              changedGroups.contains(m_groupForGame.value(gameKey(source))))) {
-                emit dataChanged(index(row), index(row), roles);
+                emit dataChanged(index(row), index(row), forwardedRoles);
               }
             }
           });
 }
 
+void UnifiedGameModel::setLaunchSetups(const QHash<QString,QVariantMap>& setups) {
+  m_launchSetups=setups;
+  if(!m_rows.isEmpty()) emit dataChanged(index(0),index(m_rows.size()-1),{GameRoles::InstallPath,GameRoles::Installed});
+}
 void UnifiedGameModel::setSourceEnabled(const QString& source, bool enabled) {
   const bool changed =
       enabled ? m_disabledSources.remove(source) > 0 : !m_disabledSources.contains(source);
@@ -156,7 +173,30 @@ QVariant UnifiedGameModel::data(const QModelIndex& index, int role) const {
   if (source.model == nullptr) {
     return {};
   }
+  if (role == GameRoles::InstallPath) {
+    const auto path=m_launchSetups.value(gameKey(source)).value("path").toString();
+    if(!path.isEmpty()) return path;
+  }
   if (role == GameRoles::MetadataKey) return gameKey(source);
+  if (role == GameRoles::NeedsIdentification) {
+    const auto metadata = m_metadata ? m_metadata->entry(gameKey(source)) : QVariantMap{};
+    const auto sourceIndex = source.model->index(source.row, 0);
+    return !sourceIndex.data(GameRoles::IsPortal).toBool() &&
+           !GameMetadata::platformIds(sourceIndex.data(GameRoles::System).toString()).isEmpty() &&
+           !metadata.value("rejected").toBool() &&
+           (metadata.value("igdbId").toLongLong() <= 0 || metadata.value("identityAmbiguous").toBool());
+  }
+  if (role == GameRoles::Genres || role == GameRoles::Year) {
+    const auto metadata = m_metadata ? m_metadata->entry(gameKey(source)) : QVariantMap{};
+    const bool confirmed =
+        !metadata.value("identityAmbiguous").toBool() && !metadata.value("rejected").toBool();
+    if (role == GameRoles::Genres)
+      return confirmed ? metadata.value("genres", QStringList{}) : QVariant(QStringList{});
+    if (confirmed && metadata.value("year").toInt() > 0)
+      return metadata.value("year");
+    return source.model->data(source.model->index(source.row, 0), role);
+  }
+
   if (role == GameRoles::Rating || role == GameRoles::RatingCount || role == GameRoles::Popularity) {
     const auto metadata = m_metadata ? m_metadata->entry(gameKey(source)) : QVariantMap{};
     return metadata.value(role == GameRoles::Rating ? "rating" : role == GameRoles::Popularity ? "popularity" : "ratingCount", role == GameRoles::RatingCount ? 0 : -1);
@@ -172,6 +212,8 @@ QVariant UnifiedGameModel::data(const QModelIndex& index, int role) const {
   case GameRoles::Recent:
   case GameRoles::LastPlayed:
   case GameRoles::Hours:
+  case GameRoles::PlaytimeSeconds:
+  case GameRoles::PlaytimeText:
   case GameRoles::Installed:
   case GameRoles::Pinned:
     break;
@@ -188,7 +230,16 @@ QVariant UnifiedGameModel::data(const QModelIndex& index, int role) const {
       const QString portrait = m_metadata->entry(gameKey(source)).value("portrait").toString();
       if (!portrait.isEmpty() && QFileInfo::exists(portrait)) return localUrl(portrait);
     }
-    return source.model->index(source.row, 0).data(role);
+    const QString sourceCover = source.model->index(source.row, 0).data(role).toString();
+    if (!sourceCover.isEmpty() && (!sourceCover.startsWith("file:") ||
+        QFileInfo::exists(QUrl(sourceCover).toLocalFile()))) return sourceCover;
+    if (m_metadata) {
+      const auto metadata = m_metadata->entry(gameKey(source));
+      const QString fallback = metadata.value("fallbackCover").toString();
+      if (!metadata.value("identityAmbiguous").toBool() && !metadata.value("rejected").toBool() &&
+          QFileInfo::exists(fallback)) return localUrl(fallback);
+    }
+    return QString{};
   }
   case GameRoles::SourceCoverPath:
     return source.model->index(source.row, 0).data(GameRoles::CoverPath);
@@ -281,17 +332,25 @@ QVariant UnifiedGameModel::data(const QModelIndex& index, int role) const {
     }
     return role == GameRoles::Recent ? lastPlayed > 0 : lastPlayed;
   }
-  if (role == GameRoles::Hours) {
-    int hours = 0;
+  if (role == GameRoles::Hours || role == GameRoles::PlaytimeSeconds ||
+      role == GameRoles::PlaytimeText) {
+    qint64 seconds = 0;
     for (const SourceRow& member : members) {
-      hours = std::max(hours, member.model->index(member.row, 0).data(role).toInt());
+      const auto index = member.model->index(member.row, 0);
+      const auto precise = index.data(GameRoles::PlaytimeSeconds);
+      seconds =
+          std::max(seconds, precise.isValid() ? precise.toLongLong()
+                                              : index.data(GameRoles::Hours).toLongLong() * 3600);
     }
-    return hours;
+    if (role == GameRoles::PlaytimeText)
+      return GameRoles::formatPlaytime(seconds);
+    return role == GameRoles::Hours ? seconds / 3600 : seconds;
   }
   if (role == GameRoles::Installed) {
     for (const SourceRow& member : members) {
       const QModelIndex game = member.model->index(member.row, 0);
-      const QVariant installed = game.data(role);
+      const auto path=m_launchSetups.value(gameKey(member)).value("path").toString();
+      const QVariant installed = path.isEmpty()?game.data(role):QVariant(GameLauncher::contentAvailable(path));
       if (!installed.isValid() || installed.toBool()) {
         return true;
       }
@@ -304,7 +363,11 @@ QVariant UnifiedGameModel::data(const QModelIndex& index, int role) const {
 QHash<int, QByteArray> UnifiedGameModel::roleNames() const {
   QHash<int, QByteArray> roles =
       m_models.isEmpty() ? QHash<int, QByteArray>{} : m_models.constFirst()->roleNames();
+  roles.insert(GameRoles::PlaytimeSeconds, "playtimeSeconds");
+  roles.insert(GameRoles::PlaytimeText, "playtimeText");
   roles.insert(GameRoles::MetadataKey, "metadataKey");
+  roles.insert(GameRoles::NeedsIdentification, "needsIdentification");
+  roles.insert(GameRoles::Genres, "genres");
   roles.insert(GameRoles::Rating, "rating");
   roles.insert(GameRoles::RatingCount, "ratingCount");
   roles.insert(GameRoles::Popularity, "popularity");
@@ -331,7 +394,7 @@ void UnifiedGameModel::toggleFavorite(int row) {
   }
   const bool desired = !data(index(row), GameRoles::Favorite).toBool();
   for (const SourceRow& member : groupRows(source)) {
-    if (m_userFlags.value(gameKey(member)).contains("favorite")) {
+    if (member.model->index(member.row,0).data(GameRoles::Source).toString() == "RomM" || m_userFlags.value(gameKey(member)).contains("favorite")) {
       bulkOrganize({gameKey(source)}, {{"favorite", desired}});
       return;
     }
@@ -350,7 +413,7 @@ void UnifiedGameModel::toggleHidden(int row) {
   }
   const bool desired = !data(index(row), GameRoles::Hidden).toBool();
   for (const SourceRow& member : groupRows(source)) {
-    if (m_userFlags.value(gameKey(member)).contains("hidden")) {
+    if (member.model->index(member.row,0).data(GameRoles::Source).toString() == "RomM" || m_userFlags.value(gameKey(member)).contains("hidden")) {
       bulkOrganize({gameKey(source)}, {{"hidden", desired}});
       return;
     }
@@ -473,12 +536,16 @@ QVariantList UnifiedGameModel::installations(int row) const {
     const QString installPath = installation.value(QStringLiteral("installPath")).toString();
     bool available = (!installation.contains(QStringLiteral("installed")) ||
                             installation.value(QStringLiteral("installed")).toBool()) &&
-                           (installPath.isEmpty() || QFileInfo::exists(installPath));
+                           (installPath.isEmpty() || GameLauncher::contentAvailable(installPath));
     if (available && installation.value(QStringLiteral("source")).toString() == QStringLiteral("Manual")) {
       QString executable, directory, error;
       QStringList arguments;
       available = ManualGameModel::validateLaunch(installation.value(QStringLiteral("launchTarget")).toString(),
           installation.value(QStringLiteral("appId")).toString(), &executable, &arguments, &directory, &error);
+    }
+    if (available && m_launchInspector) {
+      const auto plan=m_launchInspector(installation);
+      if(plan.value("supported").toBool()) available=plan.value("available").toBool();
     }
     installation.insert(QStringLiteral("launchAvailable"), available);
     if (isPreferred && available) {
@@ -1023,6 +1090,8 @@ QVariantMap UnifiedGameModel::gameMap(const SourceRow& source) const {
                 m_organizationForGame.value(gameKey(source)).status);
   result.insert(QStringLiteral("tags"), m_organizationForGame.value(gameKey(source)).tags);
   result.insert(QStringLiteral("collections"), m_collectionsForGame.value(gameKey(source)));
+  const auto repaired=m_launchSetups.value(gameKey(source)).value("path").toString();
+  if(!repaired.isEmpty()) { result["installPath"]=repaired;result["installed"]=GameLauncher::contentAvailable(repaired); }
   return result;
 }
 
@@ -1434,9 +1503,48 @@ void UnifiedGameModel::loadCollections() {
 void UnifiedGameModel::setMetadata(GameMetadata* metadata) {
   if (m_metadata) disconnect(m_metadata, nullptr, this, nullptr);
   m_metadata = metadata;
-  if (metadata) connect(metadata, &GameMetadata::entryChanged, this, [this](const QString& key) {
-    for (int row = 0; row < m_rows.size(); ++row) if (gameKey(m_rows.at(row)) == key)
-      emit dataChanged(index(row), index(row), {GameRoles::CoverPath, GameRoles::Rating, GameRoles::RatingCount, GameRoles::Popularity});
+  if (metadata) connect(metadata, &GameMetadata::entryChanged, this,
+                       [this](const QString& key, const QVariantMap& previous) {
+    const auto current = m_metadata->entry(key);
+    QList<int> roles;
+    const auto needsReview = [](const QVariantMap& value) {
+      return !value.value("rejected").toBool() &&
+             (value.value("igdbId").toLongLong() <= 0 || value.value("identityAmbiguous").toBool());
+    };
+    if (needsReview(previous) != needsReview(current)) roles.append(GameRoles::NeedsIdentification);
+    if (previous.value("fallbackCover") != current.value("fallbackCover") ||
+        previous.value("identityAmbiguous") != current.value("identityAmbiguous") ||
+        previous.value("rejected") != current.value("rejected") ||
+        previous.value("portrait") != current.value("portrait") ||
+        (!current.value("portrait").toString().isEmpty() &&
+         previous.value("portraitUpdated") != current.value("portraitUpdated")))
+      roles.append(GameRoles::CoverPath);
+    for (const auto& field : {std::pair{"rating", GameRoles::Rating},
+                              std::pair{"ratingCount", GameRoles::RatingCount},
+                              std::pair{"popularity", GameRoles::Popularity}}) {
+      const int fallback = field.second == GameRoles::RatingCount ? 0 : -1;
+      if (previous.value(field.first, fallback) != current.value(field.first, fallback))
+        roles.append(field.second);
+    }
+    const auto confirmed = [](const QVariantMap& entry) {
+      return !entry.value("identityAmbiguous").toBool() && !entry.value("rejected").toBool();
+    };
+    const auto genres = [&](const QVariantMap& entry) {
+      return confirmed(entry) ? entry.value("genres").toStringList() : QStringList{};
+    };
+    const auto year = [&](const QVariantMap& entry) {
+      return confirmed(entry) ? qMax(0, entry.value("year").toInt()) : 0;
+    };
+    if (genres(previous) != genres(current)) roles.append(GameRoles::Genres);
+    if (year(previous) != year(current)) roles.append(GameRoles::Year);
+    // An empty dataChanged role list means every role. Details-only changes
+    // must not reload artwork, rebuild Home, or rescan the library filters.
+    if (roles.isEmpty()) return;
+    for (int row = 0; row < m_rows.size(); ++row)
+      if (gameKey(m_rows.at(row)) == key) emit dataChanged(index(row), index(row), roles);
   });
-  if (!m_rows.isEmpty()) emit dataChanged(index(0), index(m_rows.size()-1), {GameRoles::CoverPath, GameRoles::Rating, GameRoles::RatingCount, GameRoles::Popularity});
+  if (!m_rows.isEmpty())
+    emit dataChanged(index(0), index(m_rows.size() - 1),
+                     {GameRoles::CoverPath, GameRoles::Rating, GameRoles::RatingCount,
+                      GameRoles::Popularity, GameRoles::Genres, GameRoles::Year, GameRoles::NeedsIdentification});
 }

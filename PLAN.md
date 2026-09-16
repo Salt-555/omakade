@@ -1,10 +1,32 @@
 # Omakade product and delivery plan
 
+Current post-1.8 work and backlog decisions are tracked in
+[POST-1.8-LOCAL.md](docs/POST-1.8-LOCAL.md). Historical milestones below do not
+mean that an implemented or locally tested feature is awaiting implementation.
+
 Implementation status: M0 through M7 are complete. Steam, GOG, Lutris,
 Heroic, Faugus, RetroArch, PCSX2, Ryujinx, and Battle.net import, launch
 delegation, source filters, organization, settings, release checks, explicit
 linking, RetroAchievements, and Sunshine/Moonlight integration are implemented.
 M6 shipped in 1.6.0; remaining hardware and real-library validation is tracked below.
+
+## Current local work and launch direction
+
+The [save-protection candidate](docs/SAVE-SETS.md) adds bounded local emulator save sets,
+confirmed restore, and interrupted-restore recovery using existing launch choices. Broader automatic
+performance profiles need portable evidence before becoming a shipped catalog.
+
+The [automatic launch audit](docs/AUTOMATIC-LAUNCH-AUDIT-2026-09-09.md) records
+the tested resolver fixes and remaining gameplay acceptance.
+
+The latest library audit and optional review filters are documented in
+[library-review-2026-09-09](docs/library-review-2026-09-09/README.md).
+
+Play should launch immediately using a sensible installed emulator/core and preserve
+known-working game-specific choices. Do not add a first-launch questionnaire. Keep any
+advanced overrides optional. Existing preferred linked installations already handle some
+exceptions; assess the remaining gaps before adding a new profile system. Runner changes
+need real game testing and save-continuity checks, not claims of universally optimal settings.
 
 ## Product statement
 
@@ -846,38 +868,86 @@ Gate:
 
 Couch mode (M6) is the headline 1.6 feature, building on this streaming work.
 
-### Current roadmap, September 5, 2026
+### Current roadmap, September 12, 2026
 
-Version 1.6.0 shipped on September 5 at `c91b14e`, including Couch Mode,
-direct GOG support, ARM64 packages, dependency scanning, and release SBOMs.
-The earlier milestone sections describe the development history.
+Version 1.8.0 is the current public release. The integrated 1.9 testing candidate
+combines maintenance correctness fixes, opt-in ProtonDB badges, emulator save
+protection and management, and per-game Play History. A read-only RomM adapter is
+in development; only its bounded parser, local path confinement, and machine-local
+settings are complete. Its exact state and continuation are in
+[1.9-DEVELOPMENT-HANDOFF.md](docs/1.9-DEVELOPMENT-HANDOFF.md).
 
-The active post-1.6 completion scope and acceptance gates are in
-[COMPLETION-PLAN.md](docs/COMPLETION-PLAN.md), with execution evidence in
-[COMPLETION-PROGRESS.md](docs/COMPLETION-PROGRESS.md). Convenience features
-are local candidate work until maintainer testing and publication approval.
-Real launcher reports (#9) and ARM64 hardware evidence (#13) remain open;
-published packages do not establish hardware compatibility.
+The 1.9 gate is an exact-candidate Release build, full automated suite, staged
+installation, package lifecycle validation, and a manual pass through matching,
+launching, ProtonDB, save protection, session recording, and controller use.
+Publication still requires explicit maintainer approval. Real launcher reports
+(#9) remain external coverage, and OPR delivery (#42) is controlled by the
+Omarchy package repository.
 
-The shared QML role-name cleanup from PR #28 is included in the 1.7 candidate.
-It preserves role IDs and names across the existing nine game models.
+Xenia (#44) and TV/Gamescope helper work (#33) remain separate product decisions
+and are not part of 1.9 acceptance.
+
+RomM remains read-only and local-first: its API may provide metadata for files beneath
+an explicitly mounted local library root. It will not download, stream, delete, or
+modify RomM content. Client credentials belong in libsecret, never the settings file.
 
 ## Explicitly deferred
 
 - Installing, updating, repairing, or moving games
 - Storefront browsing and purchasing
 - Proton or Wine configuration
-- Cloud-save management
+- Cloud-save synchronization
 - Friends, chat, and multiplayer invitations
 - Automatic fuzzy merging across stores
 - Emulator installation and ROM scraping
 - Plugin marketplace or third-party executable plugins
-- Background daemon
+- General background daemons beyond the play session recorder
 - Mobile companion
 - Cross-device sync
 
 Each item needs a separate product decision. None should enter incidentally while
 building the library.
+
+## Play session tracking
+
+Omakade shows playtime per game, but every emulator keeps its own counter in its
+own format and several keep none at all. A small recorder closes that gap.
+
+### Shipped
+
+- `omakade-sessiond`, a per-user systemd service shipped with the package,
+  polls the process table every few seconds and attributes sessions by matching
+  a known emulator binary in the process table with a game image path on its
+  command line. This covers Omakade launches, terminal launches, and wrapper
+  scripts, including emulators Omakade has no source for, as long as the game
+  path is on the command line.
+- Sessions land in `play_sessions` in the library database with a periodic
+  heartbeat. A recorder restart reconciles dead processes at their last
+  heartbeat so a crash never invents play time, and elapsed time comes from the
+  monotonic clock so suspended time is not billed.
+- Sources merge their imported playtime with recorded sessions as
+  max(imported, baseline + sessions). New baselines include zero and subtract
+  already recorded sessions conservatively, since a late import may include them.
+  Existing baselines are preserved. Gaps in recording can leave the imported
+  total ahead until observed time catches up; exact overlap reconciliation is
+  still future work.
+- A Settings toggle (on by default) controls both the display and the recorder,
+  which reads the same config key. When a session for an emulator whose own
+  playtime is written on exit ends, the recorder asks the running Omakade
+  window to rescan that source so its import stops going stale.
+- Game Details exposes the eight most recent local sessions across linked
+  installations, including source, duration, active state, and recording-off context.
+
+### Later
+
+- Attribute sessions for games loaded from an emulator's own file picker, where
+  the command line carries no path: window-title matching through the Hyprland
+  IPC first, then per-emulator recents and log adapters.
+- Pause the clock while the emulator window is unfocused, matching how
+  Ryujinx excludes paused time from its own counter.
+- Optional session deletion or broader history-management tools, only with explicit
+  confirmation and without changing imported launcher playtime.
+
 
 ## Decisions to settle before M0 implementation
 

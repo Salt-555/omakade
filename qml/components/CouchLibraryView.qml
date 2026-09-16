@@ -47,6 +47,7 @@ FocusScope {
     signal savedFiltersRequested()
     signal randomRequested()
     signal settingsRequested()
+    signal homeRequested()
     signal desktopRequested()
     signal coverRequested(string source, string appId)
 
@@ -314,7 +315,7 @@ FocusScope {
         border.color: root.alpha(Theme.foreground, 0.12)
     }
 
-    RowLayout {
+    ColumnLayout {
         id: topBar
         anchors.top: parent.top
         anchors.left: parent.left
@@ -324,46 +325,82 @@ FocusScope {
         anchors.rightMargin: 54 * root.uiScale
         spacing: 12 * root.uiScale
 
-        Row {
-            spacing: 12 * root.uiScale
-            Layout.alignment: Qt.AlignVCenter
+        RowLayout {
+            Layout.fillWidth: true
+            Row {
+                spacing: 12 * root.uiScale
+                Layout.alignment: Qt.AlignVCenter
 
-            Image {
-                width: 42 * root.uiScale
-                height: width
-                source: "qrc:/icons/resources/icons/io.github.tsouth89.Omakade.svg"
-                sourceSize: Qt.size(96, 96)
-                Accessible.ignored: true
+                Image {
+                    width: 42 * root.uiScale
+                    height: width
+                    source: "qrc:/icons/resources/icons/io.github.tsouth89.Omakade.svg"
+                    sourceSize: Qt.size(96, 96)
+                    Accessible.ignored: true
+                }
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 0
+
+                    Text {
+                        text: "OMAKADE"
+                        color: Theme.brightForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 18 * root.uiScale
+                        font.weight: Font.Bold
+                        font.letterSpacing: 2
+                    }
+                    Text {
+                        text: "COUCH MODE"
+                        color: Theme.accent
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9 * root.uiScale
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 1.4
+                    }
+                }
             }
 
-            Column {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 0
+            Item {
+                Layout.fillWidth: true
+            }
 
-                Text {
-                    text: "OMAKADE"
-                    color: Theme.brightForeground
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 18 * root.uiScale
-                    font.weight: Font.Bold
-                    font.letterSpacing: 2
-                }
-                Text {
-                    text: "COUCH MODE"
-                    color: Theme.accent
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 9 * root.uiScale
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: 1.4
-                }
+            GlassButton {
+                id: homeButton
+                objectName: "couchHomeButton"
+                text: "HOME"
+                compact: true
+                onClicked: root.homeRequested()
+                KeyNavigation.left: desktopButton
+                KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
+            }
+            GlassButton {
+                id: settingsButton
+                objectName: "couchSettingsButton"
+                text: "SETTINGS"
+                compact: true
+                displayScale: Math.max(1, root.uiScale * 1.18)
+                onClicked: root.settingsRequested()
+                KeyNavigation.left: filtersButton
+                KeyNavigation.right: desktopButton
+                KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
+            }
+            GlassButton {
+                id: desktopButton
+                objectName: "couchDesktopButton"
+                text: "DESKTOP"
+                compact: true
+                displayScale: Math.max(1, root.uiScale * 1.18)
+                onClicked: root.desktopRequested()
+                KeyNavigation.left: settingsButton
+                KeyNavigation.right: homeButton
+                KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
             }
         }
-
-        Item { Layout.fillWidth: true }
-
-        Row {
+        Flow {
+            Layout.fillWidth: true
             spacing: 7 * root.uiScale
-            Layout.alignment: Qt.AlignVCenter
 
             GlassButton {
                 id: consoleButton
@@ -388,11 +425,8 @@ FocusScope {
             GlassButton {
                 id: showButton
                 objectName: "couchShowButton"
-                text: "SHOW: " + (root.libraryModel.mode === 1 ? "FAVORITES"
-                                : root.libraryModel.mode === 2 ? "RECENT" : "ALL")
-                Accessible.name: "Showing " + (root.libraryModel.mode === 1 ? "favorites"
-                                             : root.libraryModel.mode === 2 ? "recently played"
-                                                                            : "all games")
+                text: "SHOW: " + (root.libraryModel.mode === 1 ? "FAVORITES" : root.libraryModel.mode === 2 ? "RECENT" : "ALL")
+                Accessible.name: "Showing " + (root.libraryModel.mode === 1 ? "favorites" : root.libraryModel.mode === 2 ? "recently played" : "all games")
                 compact: true
                 displayScale: Math.max(1, root.uiScale * 1.18)
                 selected: root.libraryModel.mode !== 0
@@ -464,11 +498,7 @@ FocusScope {
             GlassButton {
                 id: searchButton
                 objectName: "couchSearchButton"
-                text: root.libraryModel.searchText.length > 0
-                      ? "SEARCH · "
-                        + root.libraryModel.searchText.substring(0, 12).toUpperCase()
-                        + (root.libraryModel.searchText.length > 12 ? "…" : "")
-                      : "SEARCH"
+                text: root.libraryModel.searchText.length > 0 ? "SEARCH · " + root.libraryModel.searchText.substring(0, 12).toUpperCase() + (root.libraryModel.searchText.length > 12 ? "…" : "") : "SEARCH"
                 compact: true
                 displayScale: Math.max(1, root.uiScale * 1.18)
                 onClicked: root.openSearch()
@@ -485,27 +515,6 @@ FocusScope {
                 onClicked: root.openBrowse()
                 KeyNavigation.left: searchButton
                 KeyNavigation.right: settingsButton
-                KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
-            }
-            GlassButton {
-                id: settingsButton
-                objectName: "couchSettingsButton"
-                text: "SETTINGS"
-                compact: true
-                displayScale: Math.max(1, root.uiScale * 1.18)
-                onClicked: root.settingsRequested()
-                KeyNavigation.left: filtersButton
-                KeyNavigation.right: desktopButton
-                KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
-            }
-            GlassButton {
-                id: desktopButton
-                objectName: "couchDesktopButton"
-                text: "DESKTOP"
-                compact: true
-                displayScale: Math.max(1, root.uiScale * 1.18)
-                onClicked: root.desktopRequested()
-                KeyNavigation.left: settingsButton
                 KeyNavigation.down: root.detailView ? favoriteButton : gameGrid
             }
         }
@@ -657,6 +666,7 @@ FocusScope {
             elide: Text.ElideRight
         }
 
+
         Row {
             spacing: 10 * root.uiScale
 
@@ -793,10 +803,20 @@ FocusScope {
             Accessible.name: title
             Accessible.role: Accessible.ListItem
 
-            Component.onCompleted: {
-                if (coverPath.length === 0) {
+            function requestMissingCover() {
+                if (visible && coverPath.length === 0)
                     root.coverRequested(source, appId)
-                }
+            }
+            Component.onCompleted: requestMissingCover()
+            onAppIdChanged: requestMissingCover()
+            onCoverPathChanged: requestMissingCover()
+            Timer {
+                interval: 1000
+                repeat: true
+                running: root.visible && gameStrip.visible && card.visible && card.coverPath.length === 0
+                         && card.x + card.width > gameStrip.contentX
+                         && card.x < gameStrip.contentX + gameStrip.width
+                onTriggered: card.requestMissingCover()
             }
 
             Rectangle {
@@ -969,6 +989,8 @@ FocusScope {
             required property int hours
             required property color accentStart
             required property color accentEnd
+
+
             readonly property bool current: gameGrid.currentIndex === index
 
             width: 196 * gameGrid.coverScale * root.uiScale
@@ -985,10 +1007,20 @@ FocusScope {
                 NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
             }
 
-            Component.onCompleted: {
-                if (coverPath.length === 0) {
+            function requestMissingCover() {
+                if (visible && coverPath.length === 0)
                     root.coverRequested(source, appId)
-                }
+            }
+            Component.onCompleted: requestMissingCover()
+            onAppIdChanged: requestMissingCover()
+            onCoverPathChanged: requestMissingCover()
+            Timer {
+                interval: 1000
+                repeat: true
+                running: root.visible && gameGrid.visible && gridCard.visible && gridCard.coverPath.length === 0
+                         && gridCard.y + gridCard.height > gameGrid.contentY
+                         && gridCard.y < gameGrid.contentY + gameGrid.height
+                onTriggered: gridCard.requestMissingCover()
             }
 
             Rectangle {

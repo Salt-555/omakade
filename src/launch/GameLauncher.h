@@ -7,6 +7,10 @@
 #include <QProcessEnvironment>
 #include <QStringList>
 #include <QTimer>
+#include <QSqlDatabase>
+#include <QVariantMap>
+
+class SaveBackups;
 
 class GameLauncher final : public QObject {
   Q_OBJECT
@@ -15,6 +19,18 @@ class GameLauncher final : public QObject {
 
 public:
   explicit GameLauncher(QObject* parent = nullptr);
+  ~GameLauncher() override;
+  void setRommLibraryRoot(const QString& root) { m_rommRoot = root; }
+  void setSetupDatabase(const QString& path);
+  Q_INVOKABLE QVariantMap inspect(const QVariantMap& installation) const;
+  Q_INVOKABLE QStringList setupOptions(const QVariantMap& installation) const;
+  Q_INVOKABLE bool saveSetup(const QVariantMap& installation, const QString& mode,
+                             const QString& core, bool flatpak, const QString& path);
+  Q_INVOKABLE bool resetSetup(const QVariantMap& installation);
+  Q_INVOKABLE void copyLaunchDetails(const QVariantMap& installation) const;
+  QHash<QString,QVariantMap> setupOverrides() const { return m_setups; }
+  static bool contentAvailable(const QString& path, bool allowArchiveEntry = true);
+  static QString setupKey(const QVariantMap& installation);
 
   [[nodiscard]] QString lastError() const;
   // True while a game process started by launch() is still alive. Games are started detached,
@@ -32,7 +48,13 @@ public:
                                                               const QString& corePath, bool flatpak,
                                                               bool preferStandalone,
                                                               const QString& standaloneExecutable = {},
-                                                              const QString& mappedCorePath = {});
+                                                              const QString& mappedCorePath = {},
+                                                              bool retroArchAvailable = true);
+  // A declared library system wins; a shared extension alone is not a console identity.
+  [[nodiscard]] static QString cartridgeSystem(const QString& contentPath, const QString& system = {});
+  // Resolve without starting a process, for launch and read-only diagnostics.
+  [[nodiscard]] LaunchCommand plannedCartridgeCommand(const QString& contentPath,
+      const QString& corePath, bool flatpak, const QString& system, QString* error) const;
   [[nodiscard]] static LaunchCommand pcsx2Command(const QString& id, bool isElf, bool flatpak);
   [[nodiscard]] static LaunchCommand ryujinxCommand(const QString& id,
                                                     const QString& nativeExecutable,
@@ -52,22 +74,32 @@ public:
                                                 const QString& winePrefix = {});
   Q_INVOKABLE bool launch(const QString& source, const QString& id, bool flatpak = false,
                           const QString& runner = {}, const QString& installPath = {},
-                          const QString& launchTarget = {});
+                          const QString& launchTarget = {}, const QString& system = {});
   Q_INVOKABLE bool manage(const QString& source, const QString& id, bool flatpak = false,
                           const QString& runner = {}, const QString& launchTarget = {});
   Q_INVOKABLE bool install(const QString& source, const QString& id);
   void setPreferStandaloneEmulators(bool value);
+  void setSaveBackups(SaveBackups* backups) { m_saveBackups = backups; }
 
 signals:
   void lastErrorChanged();
+  void setupChanged();
   void gameRunningChanged();
 
 private:
+  struct EmulatorPlan { LaunchCommand command; QString source, path, core, error; bool flatpak=false; };
+  EmulatorPlan plannedEmulator(const QVariantMap& installation) const;
+  bool launchPlannedEmulator(const QVariantMap& installation);
+  QString storedSetupKey(const QVariantMap& installation) const;
+  QString m_rommRoot;
+  QSqlDatabase m_setupDatabase;
+  QString m_setupConnection;
+  QHash<QString,QVariantMap> m_setups;
   bool launchLutris(const QString& id, bool flatpak, bool manageOnly);
   bool launchHeroic(const QString& id, const QString& runner, bool flatpak, bool manageOnly);
   bool launchFaugus(const QString& id, bool flatpak, bool manageOnly);
   bool launchRetroArch(const QString& contentPath, const QString& corePath, bool flatpak,
-                       bool manageOnly);
+                       bool manageOnly, const QString& system = {});
   bool launchPcsx2(const QString& id, bool isElf, bool flatpak, bool manageOnly);
   bool launchRyujinx(const QString& id, bool flatpak, const QString& flatpakAppId,
                      bool manageOnly);
@@ -89,6 +121,7 @@ private:
     qint64 pid = 0;
     qint64 startTime = -1;
   };
+  SaveBackups* m_saveBackups = nullptr;
   QString m_lastError;
   bool m_preferStandaloneEmulators = false;
   QList<TrackedProcess> m_trackedProcesses;

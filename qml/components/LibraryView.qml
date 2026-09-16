@@ -84,8 +84,10 @@ Item {
         keyNavigationEnabled: true
         highlightFollowsCurrentItem: true
         highlightMoveDuration: 110
-        cacheBuffer: height * 0.25
-        reuseItems: true
+        cacheBuffer: height
+        // Reused delegates can retain stale caption positions after hidden
+        // Recent updates. Keep normal viewport caching, without the reuse pool.
+        reuseItems: false
         focus: true
         property real wheelTargetY: contentY
         // Filtering can move the first row without moving retained delegates.
@@ -193,6 +195,7 @@ Item {
             required property string title
             required property string subtitle
             required property int hours
+            required property string playtimeText
             required property int rating
             required property int progress
             required property bool favorite
@@ -221,9 +224,22 @@ Item {
                 })
             }
 
+            // Dropped queue entries and transient failures must recover while the card
+            // stays on screen, without requiring the user to leave and return.
+            Timer {
+                interval: 1000
+                repeat: true
+                running: root.visible && delegateRoot.visible && delegateRoot.coverPath.length === 0
+                         && delegateRoot.y + delegateRoot.height > grid.contentY
+                         && delegateRoot.y < grid.contentY + grid.height
+                onTriggered: delegateRoot.requestVisibleCover()
+            }
+
             Component.onCompleted: requestVisibleCover()
             onAppIdChanged: requestVisibleCover()
             onVisibleChanged: requestVisibleCover()
+            onCoverPathChanged: requestVisibleCover()
+            GridView.onReused: requestVisibleCover()
 
             GameCard {
                 anchors.fill: parent
@@ -231,6 +247,8 @@ Item {
                 anchors.rightMargin: 8
                 anchors.topMargin: 7
                 anchors.bottomMargin: 7
+                gameSource: delegateRoot.index >= 0 ? delegateRoot.source : ""
+                appId: delegateRoot.appId
                 title: delegateRoot.title
                 // Inside a console the heading already names the system, so the launcher's
                 // long core name is repetition. Drop it and let the rating and playtime have
@@ -238,6 +256,7 @@ Item {
                 subtitle: Library.consoleFilter.length > 0 && delegateRoot.source.length > 0
                           ? delegateRoot.source : delegateRoot.subtitle
                 hours: delegateRoot.hours
+                playtimeText: delegateRoot.playtimeText
                 rating: delegateRoot.rating
                 progress: delegateRoot.progress
                 favorite: delegateRoot.favorite
@@ -247,6 +266,8 @@ Item {
                 coverMark: delegateRoot.coverMark
                 coverPath: delegateRoot.coverPath
                 current: grid.currentIndex === delegateRoot.index
+                inViewport: delegateRoot.y + delegateRoot.height > grid.contentY
+                            && delegateRoot.y < grid.contentY + grid.height
                 focus: current
                 // A recycled delegate keeps its place in the scene but stands for no row, and
                 // carries index -1. Leaving it in the focus chain let a keyboard or controller

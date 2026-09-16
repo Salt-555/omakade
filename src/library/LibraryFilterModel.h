@@ -37,6 +37,16 @@ class LibraryFilterModel final : public QSortFilterProxyModel {
   Q_PROPERTY(QString collectionFilter READ collectionFilter WRITE setCollectionFilter NOTIFY
                  organizationFilterChanged)
   Q_PROPERTY(QString tagFilter READ tagFilter WRITE setTagFilter NOTIFY organizationFilterChanged)
+  Q_PROPERTY(
+      QString genreFilter READ genreFilter WRITE setGenreFilter NOTIFY organizationFilterChanged)
+  Q_PROPERTY(
+      QString decadeFilter READ decadeFilter WRITE setDecadeFilter NOTIFY organizationFilterChanged)
+  Q_PROPERTY(QString platformFilter READ platformFilter WRITE setPlatformFilter NOTIFY
+                 organizationFilterChanged)
+  Q_PROPERTY(QString reviewFilter READ reviewFilter WRITE setReviewFilter NOTIFY organizationFilterChanged)
+  Q_PROPERTY(QStringList genreNames READ genreNames NOTIFY metadataOptionsChanged)
+  Q_PROPERTY(QStringList decadeNames READ decadeNames NOTIFY metadataOptionsChanged)
+  Q_PROPERTY(QStringList platformNames READ platformNames NOTIFY metadataOptionsChanged)
   Q_PROPERTY(QStringList collectionNames READ collectionNames NOTIFY organizationNamesChanged)
   Q_PROPERTY(QStringList tagNames READ tagNames NOTIFY organizationNamesChanged)
   Q_PROPERTY(bool consolePortalsEnabled READ consolePortalsEnabled WRITE setConsolePortalsEnabled
@@ -96,6 +106,17 @@ public:
   void setCollectionFilter(const QString& value);
   [[nodiscard]] QString tagFilter() const;
   void setTagFilter(const QString& value);
+  QString reviewFilter() const { return m_reviewFilter; }
+  void setReviewFilter(const QString& value);
+  QString genreFilter() const { return m_genreFilter; }
+  QString decadeFilter() const { return m_decadeFilter; }
+  QString platformFilter() const { return m_platformFilter; }
+  void setGenreFilter(const QString& value);
+  void setDecadeFilter(const QString& value);
+  void setPlatformFilter(const QString& value);
+  QStringList genreNames() const;
+  QStringList decadeNames() const;
+  QStringList platformNames() const;
   [[nodiscard]] QStringList collectionNames() const;
   [[nodiscard]] QStringList tagNames() const;
   [[nodiscard]] bool consolePortalsEnabled() const;
@@ -120,7 +141,9 @@ public:
   Q_INVOKABLE bool renameSavedFilter(const QString& id, const QString& name);
   Q_INVOKABLE bool removeSavedFilter(const QString& id);
   Q_INVOKABLE bool applySavedFilter(const QString& id);
-  QVariantMap filterState() const;
+  Q_INVOKABLE QVariantMap filterState() const;
+  Q_INVOKABLE bool applyFilterState(const QVariantMap& state);
+  Q_INVOKABLE int revealGame(const QString& source, const QString& runner, const QString& appId);
   Q_INVOKABLE int indexOf(const QString& source, const QString& runner, const QString& appId) const;
   Q_INVOKABLE void toggleFavorite(int row);
   Q_INVOKABLE void toggleHidden(int row);
@@ -135,6 +158,8 @@ public:
   Q_INVOKABLE QVariantList linkCandidates(int row, const QString& search) const;
   Q_INVOKABLE bool recordLaunch(int row, const QString& source, const QString& runner,
                                 const QString& appId);
+  Q_INVOKABLE bool recordLaunchByIdentity(const QString& source, const QString& runner,
+                                           const QString& appId);
   Q_INVOKABLE bool linkGames(int row, const QString& source, const QString& runner,
                              const QString& appId);
   Q_INVOKABLE bool unlinkGames(int row);
@@ -157,6 +182,7 @@ signals:
   void sourceFilterChanged();
   void organizationFilterChanged();
   void organizationNamesChanged();
+  void metadataOptionsChanged();
   void consoleNavigationChanged();
 
 protected:
@@ -196,6 +222,9 @@ private:
   QString m_completionFilter;
   QString m_collectionFilter;
   QString m_tagFilter;
+  QString m_genreFilter, m_decadeFilter, m_platformFilter, m_reviewFilter;
+  QStringList metadataOptions(int role) const;
+  static QString platformFor(const QModelIndex& index);
   bool m_consolePortalsEnabled = true;
   QString m_consoleFilter;
 };
