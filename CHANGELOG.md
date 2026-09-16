@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add Xbox 360 games through Xenia Canary as a new emulator source, with discovery
+  from Xenia's recent-games list and storage root, library integration, save
+  backup, and launching through the `xenia_canary` binary.
+
 ## 1.9.2
 
 - Add an optional ProtonDB tier badge on library cards, off by default. Turn on both

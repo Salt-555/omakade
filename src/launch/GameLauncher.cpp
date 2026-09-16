@@ -80,7 +80,9 @@ bool validCemuPath(const QString& id) {
 
 bool validXeniaPath(const QString& id) {
   const QString path = id.startsWith(QStringLiteral("path:")) ? id.mid(5) : id;
-  return validLaunchPath(path, {QStringLiteral("iso"), QStringLiteral("xex")}, false);
+  return validLaunchPath(path,
+                         {QStringLiteral("iso"), QStringLiteral("xex"), QStringLiteral("zar")},
+                         false);
 }
 
 bool validRyujinxId(const QString& id) {
@@ -1148,7 +1150,8 @@ QString GameLauncher::xeniaExecutable() {
   // user's PATH decides. Common aliases cover canary and canary-experimental.
   for (const QString& candidate :
        {QStringLiteral("xenia_canary"), QStringLiteral("xenia-canary"),
-        QStringLiteral("xenia_canary-linux"), QStringLiteral("xenia")}) {
+        QStringLiteral("xenia_canary_linux"), QStringLiteral("xenia_canary_linux.AppImage"),
+        QStringLiteral("xenia")}) {
     const QString found = QStandardPaths::findExecutable(candidate);
     if (!found.isEmpty()) {
       return found;

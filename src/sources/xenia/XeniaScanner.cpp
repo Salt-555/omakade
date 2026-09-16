@@ -64,8 +64,7 @@ QString titleFromDisc(const QString& isoPath) {
   }
   const QByteArray label = file.read(32);
   const int end = label.indexOf('\0');
-  const QString name = QString::fromLatin1(end < 0 ? label : label.left(end))
-                           .simplified();
+  const QString name = QString::fromLatin1(end < 0 ? label : label.left(end)).simplified();
   if (name.size() >= 3 && name.contains(QLatin1Char(' '))) {
     return name;
   }
@@ -75,8 +74,8 @@ QString titleFromDisc(const QString& isoPath) {
 QString sidecarCover(const QString& titlePath) {
   const QFileInfo title(titlePath);
   const QString stem = title.absolutePath() + QLatin1Char('/') + title.completeBaseName();
-  for (const QString& extension : {QStringLiteral(".png"), QStringLiteral(".jpg"),
-                                   QStringLiteral(".jpeg")}) {
+  for (const QString& extension :
+       {QStringLiteral(".png"), QStringLiteral(".jpg"), QStringLiteral(".jpeg")}) {
     if (QFileInfo::exists(stem + extension)) {
       return stem + extension;
     }
@@ -84,26 +83,15 @@ QString sidecarCover(const QString& titlePath) {
   return {};
 }
 
-QStringList singleQuotedTomlStrings(const QString& text) {
-  QStringList values;
-  static const QRegularExpression quoted(QStringLiteral("'([^']*)'"));
-  QRegularExpressionMatchIterator it = quoted.globalMatch(text);
-  while (it.hasNext()) {
-    const QString value = it.next().captured(1);
-    if (!value.isEmpty()) {
-      values.append(value);
-    }
-  }
-  return values;
-}
-
-void normalizeWindowsPath(QString* path) {
+bool normalizeWindowsPath(QString* path) {
   if (path->length() >= 2 && path->at(1) == QLatin1Char(':')) {
-    // Wine maps drive letters to Unix roots: "Z:\home\salt\..." is
-    // "/home/salt/..." and "C:\foo" falls back to the C drive prefix used by
-    // some prefixes ("Z" is the standard root mapping; other letters rarely
-    // appear in saved paths). Drive prefix and leading backslash come off,
-    // then separators flip to forward slashes.
+    // Only the Wine Z: root maps predictably onto the host filesystem.
+    // Other drive letters are prefix-relative and cannot be resolved from the
+    // saved path alone, so leave them alone rather than importing a path that
+    // does not exist.
+    if (path->at(0).toUpper() != QLatin1Char('Z')) {
+      return false;
+    }
     if (path->length() >= 3 && (*path)[2] == QLatin1Char('\\')) {
       path->remove(0, 3);
     } else {
@@ -113,6 +101,7 @@ void normalizeWindowsPath(QString* path) {
     path->prepend(QLatin1Char('/'));
   }
   *path = QDir::cleanPath(*path);
+  return true;
 }
 
 struct RecentTitle {
@@ -120,69 +109,92 @@ struct RecentTitle {
   QString title;
 };
 
-QVector<RecentTitle> recentTitles(const QString& storageRoot) {
+QVector<RecentTitle> recentTitles(const QString& storageRoot, XeniaScanResult* result) {
   QVector<RecentTitle> titles;
   QFile file(storageRoot + QStringLiteral("/recent.toml"));
-  if (!file.open(QIODevice::ReadOnly | QIODevice::Text) ||
-      file.size() > kMaximumTomlBytes) {
+  if (!file.exists()) {
+    // A fresh install has not written recent.toml yet; that is not an error.
+    return titles;
+  }
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (result != nullptr) {
+      result->incomplete = true;
+      result->warnings.append(QStringLiteral("Could not read %1/recent.toml").arg(storageRoot));
+    }
+    return titles;
+  }
+  if (file.size() > kMaximumTomlBytes) {
+    if (result != nullptr) {
+      result->incomplete = true;
+      result->warnings.append(
+          QStringLiteral("Ignored an oversized %1/recent.toml").arg(storageRoot));
+    }
     return titles;
   }
   // Entries look like:
   // [0]
   // last_run_time = 1788911947
   // path = 'Z:\home\salt\Games\Fable II\default.xex'
-  // title_name = 'Fable II'
+  // title_name = "Fable II"
+  // The writer emits both literal (') and basic (") strings and does not
+  // guarantee key order, so read each section's keys independently.
   static const QRegularExpression pathValue(
-      QStringLiteral("^\\s*path\\s*=\\s*'([^']*)'"));
+      QStringLiteral("^\\s*path\\s*=\\s*(?:'([^']*)'|\"([^\"]*)\")"));
   static const QRegularExpression nameValue(
-      QStringLiteral("^\\s*title_name\\s*=\\s*'([^']*)'"));
+      QStringLiteral("^\\s*title_name\\s*=\\s*(?:'([^']*)'|\"([^\"]*)\")"));
+  const auto capture = [](const QRegularExpressionMatch& match) {
+    return match.captured(1).isEmpty() ? match.captured(2) : match.captured(1);
+  };
   RecentTitle current;
-  bool pending = false;
-  const QList<QByteArray> lines = file.readAll().split('\n');
   auto flush = [&]() {
-    if (pending && !current.path.isEmpty()) {
-      titles.append(current);
+    if (!current.path.isEmpty()) {
+      if (normalizeWindowsPath(&current.path)) {
+        titles.append(current);
+      } else if (result != nullptr) {
+        result->warnings.append(
+            QStringLiteral("Skipped a non-Z: Windows path that needs a Wine prefix: %1")
+                .arg(current.path));
+      }
     }
     current = RecentTitle{};
-    pending = false;
   };
+  const QList<QByteArray> lines = file.readAll().split('\n');
   for (const QByteArray& raw : lines) {
     const QString line = QString::fromUtf8(raw);
-    if (line.trimmed().startsWith(QLatin1Char('['))) {
+    const QString trimmed = line.trimmed();
+    if (trimmed.isEmpty() || trimmed.startsWith(QLatin1Char('#'))) {
+      continue;
+    }
+    if (trimmed.startsWith(QLatin1Char('['))) {
       flush();
       continue;
     }
     const QRegularExpressionMatch pathMatch = pathValue.match(line);
     if (pathMatch.hasMatch()) {
-      if (pending) {
-        flush();
-      }
-      pending = true;
-      current.path = pathMatch.captured(1);
+      current.path = capture(pathMatch);
       continue;
     }
     const QRegularExpressionMatch nameMatch = nameValue.match(line);
     if (nameMatch.hasMatch()) {
-      if (pending) {
-        current.title = nameMatch.captured(1);
-      }
+      current.title = capture(nameMatch);
     }
   }
   flush();
-  for (RecentTitle& title : titles) {
-    normalizeWindowsPath(&title.path);
-  }
   return titles;
 }
 
-void collectGames(const QString& directory, int depth, bool flatpak,
-                  const QString& flatpakAppId, QSet<QString>* seenPaths,
-                  QSet<QString>* seenIds, XeniaScanResult* result) {
+void collectGames(const QString& directory, int depth, bool flatpak, const QString& flatpakAppId,
+                  QSet<QString>* seenPaths, QSet<QString>* seenIds, XeniaScanResult* result) {
   if (depth > kMaximumScanDepth) {
     return;
   }
   const QDir dir(directory);
   if (!dir.exists()) {
+    return;
+  }
+  if (!QFileInfo(directory).isReadable()) {
+    result->incomplete = true;
+    result->warnings.append(QStringLiteral("Could not read %1").arg(directory));
     return;
   }
   if (looksLikeTitleDirectory(dir)) {
@@ -209,12 +221,11 @@ void collectGames(const QString& directory, int depth, bool flatpak,
     return;
   }
   // Disc images are games in their own right; deeper folders may hold more.
-  const QFileInfoList children =
-      dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+  const QFileInfoList children = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
   for (const QFileInfo& child : children) {
     if (child.isDir()) {
-      collectGames(child.absoluteFilePath(), depth + 1, flatpak, flatpakAppId, seenPaths,
-                   seenIds, result);
+      collectGames(child.absoluteFilePath(), depth + 1, flatpak, flatpakAppId, seenPaths, seenIds,
+                   result);
       continue;
     }
     if (!isDiscFile(child.fileName())) {
@@ -269,7 +280,6 @@ QStringList XeniaScanner::discoverRoots() {
           QStringLiteral("/Xenia"),
       home + QStringLiteral("/.local/share/Xenia"),
       home + QStringLiteral("/Xenia"),
-      home + QStringLiteral("/.var/app/org.xenia.xenia/data/Xenia"),
   };
   candidates.removeDuplicates();
 
@@ -290,9 +300,8 @@ XeniaScanResult XeniaScanner::scan(const QStringList& roots) {
   QSet<QString> seenIds;
 
   for (const QString& root : roots) {
-    const bool hasConfig =
-        QFileInfo(root + QStringLiteral("/xenia-canary.config.toml")).isFile() ||
-        QFileInfo(root + QStringLiteral("/xenia.config.toml")).isFile();
+    const bool hasConfig = QFileInfo(root + QStringLiteral("/xenia-canary.config.toml")).isFile() ||
+                           QFileInfo(root + QStringLiteral("/xenia.config.toml")).isFile();
     if (!hasConfig && !QFileInfo(root + QStringLiteral("/recent.toml")).isFile()) {
       continue;
     }
@@ -300,9 +309,15 @@ XeniaScanResult XeniaScanner::scan(const QStringList& roots) {
 
     // Games the emulator has actually run are the highest-confidence entries:
     // recent.toml records the exact launch path and a display title.
-    for (const RecentTitle& recent : recentTitles(root)) {
+    for (const RecentTitle& recent : recentTitles(root, &result)) {
       const QFileInfo info(recent.path);
       if (!info.isFile() || !info.isReadable()) {
+        // The game may simply be on a drive that is not mounted right now.
+        // Report the scan as incomplete so the cached library is preserved
+        // instead of being marked stale and hidden.
+        result.incomplete = true;
+        result.warnings.append(
+            QStringLiteral("A recently launched game is unavailable: %1").arg(recent.path));
         continue;
       }
       if (seenPaths.contains(recent.path)) {
